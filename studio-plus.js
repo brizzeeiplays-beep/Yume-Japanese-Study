@@ -1,0 +1,32 @@
+"use strict";
+/* The word bank contains only user-entered content. No automatic translation or scraping. */
+const ALLOWED_VOCAB_SOURCES = new Set(['https://github.com/donkuri/Kaishi','https://morg.systems/yokubi','https://morg.systems/Japanese-Primer','https://www.tofugu.com/japanese/learn-hiragana/','https://www.tofugu.com/japanese/learn-katakana/']);
+function studyDate(){const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
+function logStudyActivity(type){const key=studyDate(),p=state.activityLog[key]||{practice:0,timer:0,words:0,lessons:0};p[type]=(Number(p[type])||0)+1;state.activityLog[key]=p;save();renderStageProgress();}
+function renderSectionMastery(){const el=$('sectionMastery');if(!el)return;const list=cardsForGroup(),stats=practice.cardStats||{};const touched=list.filter(c=>stats[c.key]&&(stats[c.key].right+stats[c.key].wrong)>0);const solid=list.filter(c=>stats[c.key]?.right>=2 && (stats[c.key]?.right||0)>=(stats[c.key]?.wrong||0));el.textContent=`This section: ${touched.length}/${list.length} characters attempted · ${solid.length}/${list.length} practiced correctly at least twice. Counts are practice indicators, not proficiency certification.`;}
+$('studyScript').addEventListener('change',renderSectionMastery);
+$('studyGroup').addEventListener('change',renderSectionMastery);
+renderSectionMastery();
+function renderStageProgress(){const root=$('stageProgress');if(!root)return;root.replaceChildren();let total=0;
+  if(typeof COURSE_DATA!=='undefined')COURSE_DATA.forEach((stage,i)=>{const n=stage.units.filter(u=>state.courseCompleted?.[u.id]).length;total+=n;const item=make('div',undefined,'stage-line');const head=make('div',undefined,'stage-line-head');head.append(make('span',`${['あ','ア','文','語','聴','学'][i]}  ${stage.title}`),make('b',`${n} / ${stage.units.length}`));const bar=make('div',undefined,'stage-mini-bar');const fill=make('span');fill.style.width=(100*n/stage.units.length)+'%';bar.append(fill);item.append(head,bar);root.append(item)});
+  const days=Object.keys(state.activityLog||{}).filter(k=>{const a=state.activityLog[k];return a&&Object.values(a).some(n=>Number(n)>0)}).length;$('activityDays').textContent=`${days} active day${days===1?'':'s'}`;
+  const stats=practice.cardStats||{};const reviewed=Object.values(stats).filter(v=>v.right||v.wrong).length;const pending=Object.values(practice.missed||{}).filter(n=>n>0).length;
+  $('reviewSummary').textContent=`${reviewed} unique kana attempted · ${pending} kana currently in your missed-review queue · ${total} course checkpoints completed.`;
+}
+function safeVocabCards(){state.vocabCards=Array.isArray(state.vocabCards)?state.vocabCards.filter(v=>v&&typeof v.word==='string'&&typeof v.meaning==='string'&&typeof v.reading==='string'&&ALLOWED_VOCAB_SOURCES.has(v.source)).slice(0,500):[];}
+let reviewIndex=0,reviewRevealed=false,reviewOrder=[];
+function renderWordList(){safeVocabCards();const root=$('wordList');root.replaceChildren();const q=$('vocabSearch').value.trim().toLowerCase();const shown=state.vocabCards.filter(w=>[w.word,w.meaning,w.reading].some(x=>x.toLowerCase().includes(q)));
+ $('vocabCardCount').textContent=`${state.vocabCards.length} cards`;
+ if(!shown.length)root.append(make('p',q?'No matching cards.':'Your word bank is empty. Add an entry from an approved lesson first.','small-note'));
+ shown.forEach(w=>{const row=make('div',undefined,'word-row');const main=make('div',undefined,'word-primary');const word=make('strong',w.word);word.lang='ja';main.append(word,make('span',w.reading,'word-reading'),make('span',w.meaning,'word-meaning'));const actions=make('div',undefined,'word-actions');const src=safeLink(w.source,'Source');const remove=make('button','Remove','secondary');remove.type='button';remove.setAttribute('aria-label',`Remove ${w.word}`);remove.addEventListener('click',()=>{state.vocabCards=state.vocabCards.filter(x=>x.id!==w.id);save();renderWordList();renderVocabReview()});actions.append(src,remove);row.append(main,actions);root.append(row)})
+}
+$('wordForm').addEventListener('submit',e=>{e.preventDefault();const word=$('wordJapanese').value.trim(),reading=$('wordReading').value.trim(),meaning=$('wordMeaning').value.trim(),source=$('wordSource').value;if(!word||!reading||!meaning||!ALLOWED_VOCAB_SOURCES.has(source))return;if(state.vocabCards.length>=500){notify('Word bank is full (500 entries). Export a backup before removing old entries.');return;}state.vocabCards.push({id:Date.now().toString(36)+'-'+Math.random().toString(36).slice(2),word:word.slice(0,60),reading:reading.slice(0,80),meaning:meaning.slice(0,150),source,known:false});save();$('wordForm').reset();renderWordList();notify('Saved to your word bank');logStudyActivity('words')});
+$('vocabSearch').addEventListener('input',renderWordList);
+$('vocabPractice').addEventListener('click',()=>{safeVocabCards();if(!state.vocabCards.length){notify('Add a word from an approved source first.');return;}reviewOrder=[...state.vocabCards.map(w=>w.id)].sort(()=>Math.random()-.5);reviewIndex=0;reviewRevealed=false;renderVocabReview()});
+function renderVocabReview(){const root=$('vocabReview');root.replaceChildren();if(!reviewOrder.length)return;const current=state.vocabCards.find(w=>w.id===reviewOrder[reviewIndex]);if(!current){reviewOrder=[];return}
+ root.append(make('p',`Review ${reviewIndex+1} of ${reviewOrder.length}`,'small-note'));const face=make('button',undefined,'word-flip');face.type='button';face.append(make('span',current.word,'word-big'));if(reviewRevealed)face.append(make('span',`${current.reading} · ${current.meaning}`,'word-answer'));else face.append(make('span','Tap to reveal the reading and meaning','small-note'));face.addEventListener('click',()=>{reviewRevealed=!reviewRevealed;renderVocabReview()});root.append(face);
+ const row=make('div',undefined,'quiz-actions');const next=make('button',reviewIndex===reviewOrder.length-1?'Finish review':'Next word →','primary');next.type='button';next.addEventListener('click',()=>{if(reviewIndex===reviewOrder.length-1){reviewOrder=[];root.replaceChildren(make('p','Review complete! 🌿'));notify('Word-bank review finished');return;}reviewIndex++;reviewRevealed=false;renderVocabReview()});row.append(next);root.append(row);
+}
+renderWordList();renderStageProgress();
+document.addEventListener('yume-progress-update',renderStageProgress);
+window.addEventListener('load',renderStageProgress);
